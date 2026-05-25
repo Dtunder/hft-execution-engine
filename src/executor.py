@@ -47,12 +47,63 @@ class HFTExecutionEngine:
         print(f"[ENGINE] Order #{self.total_orders} Sent: {side} {quantity} {symbol.upper()} at Mid: ${mid_price:.2f}")
         print(f"         Filled: ${exec_price:.4f} (Slippage: {slippage*100:.3f}%) | Latency: {execution_latency_us:.1f} microseconds")
         
+        # Calculate Taker Fee (e.g. 0.035% on Hyperliquid)
+        taker_fee_rate = 0.00035
+        taker_fee = total_cost * taker_fee_rate
+
         return {
             "order_id": self.total_orders,
             "status": "FILLED",
             "execution_price": exec_price,
             "quantity": quantity,
             "cost": total_cost,
+            "fee": taker_fee,
+            "latency_us": execution_latency_us
+        }
+
+    def execute_passive_pegging(self, side, symbol, quantity, mid_price, spread=2.0):
+        """
+        Simulates placing Post-Only maker orders pegged to the dynamic best bid/ask,
+        adjusting prices mid-flight as the spread shifts. Maximizes maker fee rebates.
+        """
+        self.total_orders += 1
+        start_time = time.perf_counter()
+
+        # Simulate network delay for placing and adjusting the order
+        time.sleep(self.latency_buffer_ms * 2 / 1000.0)
+
+        half_spread = spread / 2.0
+
+        if side.upper() == "BUY":
+            # Pegged to best bid
+            best_bid = mid_price - half_spread
+            # Simulate a slight adverse selection / execution delay causing us to get filled slightly worse than ideal best bid, but better than mid
+            execution_price = best_bid + random.uniform(0.0, half_spread * 0.5)
+        else:
+            # Pegged to best ask
+            best_ask = mid_price + half_spread
+            # Simulate execution slightly worse than ideal best ask
+            execution_price = best_ask - random.uniform(0.0, half_spread * 0.5)
+
+        total_value = execution_price * quantity
+
+        # Calculate Maker Rebate (e.g. 0.01% on Hyperliquid)
+        maker_rebate_rate = 0.00010
+        maker_rebate = total_value * maker_rebate_rate
+
+        execution_latency_us = (time.perf_counter() - start_time) * 1_000_000.0
+        self.successful_fills += 1
+
+        print(f"[ENGINE] Passive Peg Order #{self.total_orders} Sent: {side} {quantity} {symbol.upper()} at Mid: ${mid_price:.2f} (Spread: ${spread:.2f})")
+        print(f"         Filled: ${execution_price:.4f} | Maker Rebate Earned: ${maker_rebate:.6f} | Latency: {execution_latency_us:.1f} microseconds")
+
+        return {
+            "order_id": self.total_orders,
+            "status": "FILLED",
+            "execution_price": execution_price,
+            "quantity": quantity,
+            "cost": total_value,
+            "rebate": maker_rebate,
             "latency_us": execution_latency_us
         }
 
