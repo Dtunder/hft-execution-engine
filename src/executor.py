@@ -56,7 +56,83 @@ class HFTExecutionEngine:
             "latency_us": execution_latency_us
         }
 
+
+    def smart_route_order(self, side, symbol, qty, depths):
+        import time
+        start_ns = time.perf_counter_ns()
+
+        time.sleep(self.latency_buffer_ms / 1000.0)
+
+        slippage_pct = 0.0
+        if qty > 0.5:
+            overage = qty - 0.5
+            slippage_pct = (overage / 0.1) * 0.0001
+
+        levels = []
+        for venue, book in depths.items():
+            fee = book.get("taker_fee", 0.0)
+            if venue.lower() == "bybit" and "maker_rebate" in book:
+                fee = -book["maker_rebate"]
+            elif "fee" in book:
+                fee = book["fee"]
+
+            if side.upper() == "BUY":
+                for price, size in book.get("asks", []):
+                    eff_price = price * (1 + slippage_pct) * (1 + fee)
+                    levels.append((eff_price, price, size, venue, fee))
+            else:
+                for price, size in book.get("bids", []):
+                    eff_price = price * (1 - slippage_pct) * (1 - fee)
+                    levels.append((eff_price, price, size, venue, fee))
+
+        if side.upper() == "BUY":
+            levels.sort(key=lambda x: x[0])
+        else:
+            levels.sort(key=lambda x: x[0], reverse=True)
+
+        remaining_qty = qty
+        total_cost = 0.0
+        fills = []
+
+        for eff_price, price, size, venue, fee in levels:
+            if remaining_qty <= 0:
+                break
+
+            fill_qty = min(remaining_qty, size)
+
+            if side.upper() == "BUY":
+                exec_price = price * (1 + slippage_pct)
+                cost = fill_qty * exec_price * (1 + fee)
+            else:
+                exec_price = price * (1 - slippage_pct)
+                cost = fill_qty * exec_price * (1 - fee)
+
+            remaining_qty -= fill_qty
+            total_cost += cost
+            fills.append({
+                "venue": venue,
+                "price": exec_price,
+                "qty": fill_qty,
+                "fee": fee
+            })
+
+        filled_qty = qty - remaining_qty
+        if filled_qty > 0:
+            avg_price = sum(f["price"] * f["qty"] for f in fills) / filled_qty
+        else:
+            avg_price = 0.0
+
+        latency_us = (time.perf_counter_ns() - start_ns) / 1000.0
+
+        return {
+            "average_price": avg_price,
+            "cost": total_cost,
+            "latency_us": latency_us,
+            "fills": fills
+        }
+
 if __name__ == "__main__":
+
     engine = HFTExecutionEngine()
     print("[ENGINE] Initializing Ultra-Low Latency Execution Engine...")
     
