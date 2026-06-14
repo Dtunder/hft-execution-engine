@@ -63,10 +63,13 @@ class HFTExecutionEngine:
         Smart Order Routing: given Binance and Bybit depth dicts, execute the order
         by splitting volume across both venues to minimize cost (taker fees vs maker rebates).
         """
-        start_time = time.perf_counter_ns()
+        start_time_ns = time.perf_counter_ns()
 
+        # Simulate sub-millisecond fill latency using time.perf_counter_ns()
         if self.latency_buffer_ms > 0:
-            time.sleep(self.latency_buffer_ms / 1000.0)
+            target_ns = start_time_ns + int(self.latency_buffer_ms * 1_000_000)
+            while time.perf_counter_ns() < target_ns:
+                pass
 
         options = []
         for venue, depth in depths.items():
@@ -75,27 +78,20 @@ class HFTExecutionEngine:
             taker_fee = fees["taker"]
 
             if side.upper() == "BUY":
-                # Maker options (posting Bids)
                 for price, vol in depth.get("bids", []):
                     eff_price = price * (1 + maker_fee)
                     options.append({"venue": venue, "type": "maker", "price": price, "vol": vol, "eff_price": eff_price})
-                # Taker options (hitting Asks)
                 for price, vol in depth.get("asks", []):
                     eff_price = price * (1 + taker_fee)
                     options.append({"venue": venue, "type": "taker", "price": price, "vol": vol, "eff_price": eff_price})
             else:
-                # Maker options (posting Asks)
                 for price, vol in depth.get("asks", []):
                     eff_price = price * (1 - maker_fee)
                     options.append({"venue": venue, "type": "maker", "price": price, "vol": vol, "eff_price": eff_price})
-                # Taker options (hitting Bids)
                 for price, vol in depth.get("bids", []):
                     eff_price = price * (1 - taker_fee)
                     options.append({"venue": venue, "type": "taker", "price": price, "vol": vol, "eff_price": eff_price})
 
-        # Sort to minimize cost
-        # For BUY, lower effective price is better
-        # For SELL, higher effective price is better (proceeds)
         reverse_sort = True if side.upper() == "SELL" else False
         options.sort(key=lambda x: x["eff_price"], reverse=reverse_sort)
 
@@ -116,7 +112,6 @@ class HFTExecutionEngine:
             })
 
         if rem_qty > 0 and options:
-            # If not enough liquidity, fill the rest at the last best available price
             last_opt = options[-1]
             fills.append({
                 "venue": "Fallback",
@@ -126,11 +121,10 @@ class HFTExecutionEngine:
                 "eff_price": last_opt["eff_price"]
             })
 
-        # Calculate base average price
         base_avg_price = sum(f["price"] * f["qty"] for f in fills) / qty if qty > 0 else 0.0
         total_eff_value = sum(f["eff_price"] * f["qty"] for f in fills)
 
-        # Add slippage model: for qty > 0.5 BTC, apply 0.01% slippage per 0.1 BTC overage
+        # Add a slippage model: for qty > 0.5 BTC, apply 0.01% slippage per 0.1 BTC overage.
         slippage_pct = 0.0
         if qty > 0.5:
             overage = qty - 0.5
@@ -145,8 +139,8 @@ class HFTExecutionEngine:
             slippage_cost = (base_avg_price - average_price) * qty
             cost = total_eff_value - slippage_cost
 
-        end_time = time.perf_counter_ns()
-        latency_us = (end_time - start_time) / 1000.0
+        end_time_ns = time.perf_counter_ns()
+        latency_us = (end_time_ns - start_time_ns) / 1000.0
 
         return {
             "average_price": average_price,
