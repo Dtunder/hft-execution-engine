@@ -83,3 +83,11 @@ def test_return_structure():
     assert "fills" in res
     assert isinstance(res["fills"], list)
     assert res["latency_us"] > 0
+
+def test_sub_millisecond_latency_simulation():
+    engine = HFTExecutionEngine(latency_buffer_ms=0.15)
+    depths = {
+        "Binance": {"bids": [[50000, 1.0]], "asks": [[50000, 1.0]]}
+    }
+    res = engine.smart_route_order("BUY", "BTCUSDT", 0.1, depths)
+    assert res["latency_us"] >= 150.0
