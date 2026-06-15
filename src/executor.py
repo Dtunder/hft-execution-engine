@@ -27,7 +27,8 @@ class HFTExecutionEngine:
             while time.perf_counter_ns() < target_time:
                 pass
 
-        options = []
+        # 1. Implement Smart Order Routing
+        route_options = []
         for venue, depth in depths.items():
             fees = FEES.get(venue, {"maker": 0.0, "taker": 0.0})
             maker_fee = fees["maker"]
@@ -37,36 +38,36 @@ class HFTExecutionEngine:
                 # Maker options (posting Bids)
                 for price, vol in depth.get("bids", []):
                     eff_price = price * (1 + maker_fee)
-                    options.append({"venue": venue, "type": "maker", "price": price, "vol": vol, "eff_price": eff_price})
+                    route_options.append({"venue": venue, "type": "maker", "price": price, "vol": vol, "eff_price": eff_price})
                 # Taker options (hitting Asks)
                 for price, vol in depth.get("asks", []):
                     eff_price = price * (1 + taker_fee)
-                    options.append({"venue": venue, "type": "taker", "price": price, "vol": vol, "eff_price": eff_price})
+                    route_options.append({"venue": venue, "type": "taker", "price": price, "vol": vol, "eff_price": eff_price})
             else:
                 # Maker options (posting Asks)
                 for price, vol in depth.get("asks", []):
                     eff_price = price * (1 - maker_fee)
-                    options.append({"venue": venue, "type": "maker", "price": price, "vol": vol, "eff_price": eff_price})
+                    route_options.append({"venue": venue, "type": "maker", "price": price, "vol": vol, "eff_price": eff_price})
                 # Taker options (hitting Bids)
                 for price, vol in depth.get("bids", []):
                     eff_price = price * (1 - taker_fee)
-                    options.append({"venue": venue, "type": "taker", "price": price, "vol": vol, "eff_price": eff_price})
+                    route_options.append({"venue": venue, "type": "taker", "price": price, "vol": vol, "eff_price": eff_price})
 
         # Sort to minimize cost
         # For BUY, lower effective price is better
         # For SELL, higher effective price is better (proceeds)
         reverse_sort = True if side.upper() == "SELL" else False
-        options.sort(key=lambda x: x["eff_price"], reverse=reverse_sort)
+        route_options.sort(key=lambda x: x["eff_price"], reverse=reverse_sort)
         
         rem_qty = qty
-        fills = []
+        order_fills = []
         
-        for opt in options:
+        for opt in route_options:
             if rem_qty <= 0:
                 break
             fill_qty = min(rem_qty, opt["vol"])
             rem_qty -= fill_qty
-            fills.append({
+            order_fills.append({
                 "venue": opt["venue"],
                 "type": opt["type"],
                 "price": opt["price"],
@@ -74,10 +75,10 @@ class HFTExecutionEngine:
                 "eff_price": opt["eff_price"]
             })
 
-        if rem_qty > 0 and options:
+        if rem_qty > 0 and route_options:
             # If not enough liquidity, fill the rest at the last best available price
-            last_opt = options[-1]
-            fills.append({
+            last_opt = route_options[-1]
+            order_fills.append({
                 "venue": "Fallback",
                 "type": "fallback",
                 "price": last_opt["price"],
@@ -86,32 +87,34 @@ class HFTExecutionEngine:
             })
 
         # Calculate base average price
-        base_avg_price = sum(f["price"] * f["qty"] for f in fills) / qty if qty > 0 else 0.0
-        total_eff_value = sum(f["eff_price"] * f["qty"] for f in fills)
+        base_average_price = sum(f["price"] * f["qty"] for f in order_fills) / qty if qty > 0 else 0.0
+        total_effective_value = sum(f["eff_price"] * f["qty"] for f in order_fills)
         
-        # Add slippage model: for qty > 0.5 BTC, apply 0.01% slippage per 0.1 BTC overage
-        slippage_pct = 0.0
+        # 3. Add a slippage model: for qty > 0.5 BTC, apply 0.01% slippage per 0.1 BTC overage
+        slippage_percentage = 0.0
         if qty > 0.5:
             overage = qty - 0.5
-            slippage_pct = (overage / 0.1) * 0.0001
+            slippage_percentage = (overage / 0.1) * 0.0001
 
         if side.upper() == "BUY":
-            average_price = base_avg_price * (1 + slippage_pct)
-            slippage_cost = (average_price - base_avg_price) * qty
-            cost = total_eff_value + slippage_cost
+            average_price = base_average_price * (1 + slippage_percentage)
+            slippage_cost = (average_price - base_average_price) * qty
+            cost = total_effective_value + slippage_cost
         else:
-            average_price = base_avg_price * (1 - slippage_pct)
-            slippage_cost = (base_avg_price - average_price) * qty
-            cost = total_eff_value - slippage_cost
+            average_price = base_average_price * (1 - slippage_percentage)
+            slippage_cost = (base_average_price - average_price) * qty
+            cost = total_effective_value - slippage_cost
 
+        # 2. Simulate sub-millisecond fill latency using time.perf_counter_ns()
         end_time = time.perf_counter_ns()
         latency_us = (end_time - start_time) / 1000.0
         
+        # 4. The return dict MUST contain
         return {
             "average_price": average_price,
             "cost": cost,
             "latency_us": latency_us,
-            "fills": fills
+            "fills": order_fills
         }
 
 if __name__ == "__main__":
