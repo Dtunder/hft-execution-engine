@@ -1,6 +1,17 @@
 import pytest
 from src.executor import HFTExecutionEngine
 
+def test_sor_chooses_bybit_for_maker_rebates():
+    engine = HFTExecutionEngine(latency_buffer_ms=0)
+    depths = {
+        "Binance": {"bids": [[50000, 1.0]], "asks": [[50000, 1.0]]},
+        "Bybit": {"bids": [[50000, 1.0]], "asks": [[50000, 1.0]]}
+    }
+    # BUY 1.0 BTC. Maker rebate on Bybit should make it the preferred choice.
+    res = engine.smart_route_order("BUY", "BTCUSDT", 1.0, depths)
+    assert res["fills"][0]["venue"] == "Bybit"
+    assert res["fills"][0]["type"] == "maker"
+
 def test_smart_order_routing_maker_rebate():
     engine = HFTExecutionEngine(latency_buffer_ms=0)
 
