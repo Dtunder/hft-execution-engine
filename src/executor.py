@@ -23,7 +23,9 @@ class HFTExecutionEngine:
         start_time = time.perf_counter_ns()
         
         if self.latency_buffer_ms > 0:
-            time.sleep(self.latency_buffer_ms / 1000.0)
+            target_time = start_time + int(self.latency_buffer_ms * 1_000_000)
+            while time.perf_counter_ns() < target_time:
+                pass
 
         options = []
         for venue, depth in depths.items():
